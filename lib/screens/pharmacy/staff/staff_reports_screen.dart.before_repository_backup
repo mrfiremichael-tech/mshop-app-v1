@@ -1,0 +1,813 @@
+﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+
+import '../../../core/localization/app_localizations.dart';
+import '../../../models/sale_model.dart';
+
+class StaffReportsScreen extends StatefulWidget {
+  const StaffReportsScreen({
+    super.key,
+  });
+
+  @override
+  State<StaffReportsScreen> createState() => _StaffReportsScreenState();
+}
+
+class _StaffReportsScreenState extends State<StaffReportsScreen> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  List<SaleModel> _allSales = [];
+  List<SaleModel> _visibleSales = [];
+
+  bool _loading = true;
+
+  String _period = 'today';
+
+  DateTime? _customStart;
+  DateTime? _customEnd;
+
+  String _t(
+    AppLocalizations l10n,
+    String english,
+    String swahili,
+  ) {
+    return l10n.isSwahili ? swahili : english;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMySales();
+  }
+
+  Future<void> _loadMySales() async {
+    try {
+      final user = _auth.currentUser;
+
+      if (user == null) {
+        throw Exception('User is not logged in.');
+      }
+
+      final snapshot = await _firestore
+          .collection('sales')
+          .where('staffId', isEqualTo: user.uid)
+          .get();
+
+      final sales = snapshot.docs
+          .map(
+            (document) => SaleModel.fromFirestore(document),
+          )
+          .toList();
+
+      sales.sort(
+        (a, b) {
+          final aDate = a.createdAt;
+          final bDate = b.createdAt;
+
+          if (aDate == null && bDate == null) {
+            return 0;
+          }
+
+          if (aDate == null) {
+            return 1;
+          }
+
+          if (bDate == null) {
+            return -1;
+          }
+
+          return bDate.compareTo(aDate);
+        },
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _allSales = sales;
+        _loading = false;
+      });
+
+      _applyPeriod();
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _t(
+              AppLocalizations.of(context),
+              'Failed to load your sales: ${_cleanError(e)}',
+              'Imeshindikana kupakia mauzo yako: ${_cleanError(e)}',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  void _applyPeriod() {
+    final now = DateTime.now();
+
+    DateTime start;
+    DateTime end;
+
+    if (_period == 'today') {
+      start = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      );
+
+      end = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        23,
+        59,
+        59,
+      );
+    } else if (_period == 'week') {
+      final today = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      );
+
+      start = today.subtract(
+        Duration(days: today.weekday - 1),
+      );
+
+      end = DateTime(
+        today.year,
+        today.month,
+        today.day,
+        23,
+        59,
+        59,
+      );
+    } else if (_period == 'month') {
+      start = DateTime(
+        now.year,
+        now.month,
+        1,
+      );
+
+      end = DateTime(
+        now.year,
+        now.month + 1,
+        0,
+        23,
+        59,
+        59,
+      );
+    } else {
+      if (_customStart == null || _customEnd == null) {
+        setState(() {
+          _visibleSales = [];
+        });
+        return;
+      }
+
+      start = DateTime(
+        _customStart!.year,
+        _customStart!.month,
+        _customStart!.day,
+      );
+
+      end = DateTime(
+        _customEnd!.year,
+        _customEnd!.month,
+        _customEnd!.day,
+        23,
+        59,
+        59,
+      );
+    }
+
+    final filtered = _allSales.where((sale) {
+      final date = sale.createdAt;
+
+      if (date == null) {
+        return false;
+      }
+
+      return !date.isBefore(start) &&
+          !date.isAfter(end);
+    }).toList();
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _visibleSales = filtered;
+    });
+  }
+
+  Future<void> _selectCustomPeriod() async {
+    final now = DateTime.now();
+
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(
+        now.year - 5,
+        1,
+        1,
+      ),
+      lastDate: now,
+      initialDateRange: _customStart != null &&
+              _customEnd != null
+          ? DateTimeRange(
+              start: _customStart!,
+              end: _customEnd!,
+            )
+          : DateTimeRange(
+              start: DateTime(
+                now.year,
+                now.month,
+                now.day,
+              ),
+              end: now,
+            ),
+    );
+
+    if (picked == null) {
+      return;
+    }
+
+    setState(() {
+      _period = 'custom';
+      _customStart = picked.start;
+      _customEnd = picked.end;
+    });
+
+    _applyPeriod();
+  }
+
+  double get _totalSales {
+    return _visibleSales.fold<double>(
+      0,
+      (total, sale) => total + sale.totalAmount,
+    );
+  }
+
+  double get _totalProfit {
+    return _visibleSales.fold<double>(
+      0,
+      (total, sale) => total + sale.profit,
+    );
+  }
+
+  int get _totalItems {
+    return _visibleSales.fold<int>(
+      0,
+      (total, sale) => total + sale.quantity,
+    );
+  }
+
+  String _formatCurrency(double value) {
+    return 'TSh ${value.toStringAsFixed(0)}';
+  }
+
+  String _formatDate(DateTime? date) {
+    if (date == null) {
+      return '-';
+    }
+
+    return '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/'
+        '${date.year}';
+  }
+
+  String _formatTime(DateTime? date) {
+    if (date == null) {
+      return '-';
+    }
+
+    return '${date.hour.toString().padLeft(2, '0')}:'
+        '${date.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _cleanError(Object error) {
+    final message = error.toString();
+
+    if (message.startsWith('Exception: ')) {
+      return message.replaceFirst(
+        'Exception: ',
+        '',
+      );
+    }
+
+    return message;
+  }
+
+  Widget _summaryCard({
+    required String title,
+    required String value,
+    required IconData icon,
+  }) {
+    return Expanded(
+      child: Card(
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                icon,
+                color: Theme.of(context)
+                    .colorScheme
+                    .primary,
+                size: 24,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _periodButton({
+    required String value,
+    required String title,
+  }) {
+    final selected = _period == value;
+
+    return ChoiceChip(
+      label: Text(title),
+      selected: selected,
+      onSelected: (_) {
+        setState(() {
+          _period = value;
+        });
+
+        _applyPeriod();
+      },
+    );
+  }
+
+  Widget _saleCard(SaleModel sale) {
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withValues(alpha: 0.10),
+                    borderRadius:
+                        BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.receipt_long_rounded,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    sale.medicineName,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Text(
+                  _formatCurrency(
+                    sale.totalAmount,
+                  ),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Qty: ${sale.quantity}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    'Profit: ${_formatCurrency(sale.profit)}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Customer: ${sale.customerName.isEmpty ? 'Walk-in Customer' : sale.customerName}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${_formatDate(sale.createdAt)} ${_formatTime(sale.createdAt)}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _periodLabel(
+    AppLocalizations l10n,
+  ) {
+    if (_period == 'today') {
+      return _t(l10n, 'Today', 'Leo');
+    }
+
+    if (_period == 'week') {
+      return _t(l10n, 'This Week', 'Wiki Hii');
+    }
+
+    if (_period == 'month') {
+      return _t(l10n, 'This Month', 'Mwezi Huu');
+    }
+
+    if (_customStart != null &&
+        _customEnd != null) {
+      return '${_formatDate(_customStart)} - '
+          '${_formatDate(_customEnd)}';
+    }
+
+    return _t(
+      l10n,
+      'Custom Period',
+      'Kipindi Maalum',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          _t(
+            l10n,
+            'My Reports',
+            'Ripoti Zangu',
+          ),
+        ),
+        actions: [
+          IconButton(
+            tooltip: _t(
+              l10n,
+              'Refresh',
+              'Refresh',
+            ),
+            onPressed: _loading
+                ? null
+                : _loadMySales,
+            icon: const Icon(
+              Icons.refresh_rounded,
+            ),
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(
+              child:
+                  CircularProgressIndicator(),
+            )
+          : RefreshIndicator(
+              onRefresh: _loadMySales,
+              child: ListView(
+                physics:
+                    const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(
+                  16,
+                  16,
+                  16,
+                  32,
+                ),
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      borderRadius:
+                          BorderRadius.circular(18),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withValues(alpha: 0.08),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.analytics_outlined,
+                          size: 34,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .primary,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _t(
+                                  l10n,
+                                  'My Sales Report',
+                                  'Ripoti ya Mauzo Yangu',
+                                ),
+                                style:
+                                    const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight:
+                                      FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(
+                                height: 4,
+                              ),
+                              Text(
+                                _t(
+                                  l10n,
+                                  'Only sales recorded by your account are shown here.',
+                                  'Hapa yanaonyeshwa mauzo yaliyorekodiwa na akaunti yako tu.',
+                                ),
+                                style:
+                                    const TextStyle(
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  Text(
+                    _t(
+                      l10n,
+                      'Period',
+                      'Kipindi',
+                    ),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _periodButton(
+                        value: 'today',
+                        title: _t(
+                          l10n,
+                          'Today',
+                          'Leo',
+                        ),
+                      ),
+                      _periodButton(
+                        value: 'week',
+                        title: _t(
+                          l10n,
+                          'Week',
+                          'Wiki',
+                        ),
+                      ),
+                      _periodButton(
+                        value: 'month',
+                        title: _t(
+                          l10n,
+                          'Month',
+                          'Mwezi',
+                        ),
+                      ),
+                      ActionChip(
+                        avatar: const Icon(
+                          Icons.date_range_rounded,
+                          size: 18,
+                        ),
+                        label: Text(
+                          _t(
+                            l10n,
+                            'Custom',
+                            'Maalum',
+                          ),
+                        ),
+                        onPressed:
+                            _selectCustomPeriod,
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  Text(
+                    _periodLabel(l10n),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurfaceVariant,
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  Row(
+                    children: [
+                      _summaryCard(
+                        title: _t(
+                          l10n,
+                          'Sales',
+                          'Mauzo',
+                        ),
+                        value:
+                            _formatCurrency(
+                          _totalSales,
+                        ),
+                        icon: Icons
+                            .point_of_sale_rounded,
+                      ),
+                      const SizedBox(width: 10),
+                      _summaryCard(
+                        title: _t(
+                          l10n,
+                          'Profit',
+                          'Faida',
+                        ),
+                        value:
+                            _formatCurrency(
+                          _totalProfit,
+                        ),
+                        icon: Icons
+                            .trending_up_rounded,
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  Row(
+                    children: [
+                      _summaryCard(
+                        title: _t(
+                          l10n,
+                          'Items Sold',
+                          'Bidhaa Zilizouzwa',
+                        ),
+                        value:
+                            _totalItems.toString(),
+                        icon: Icons
+                            .inventory_2_outlined,
+                      ),
+                      const SizedBox(width: 10),
+                      _summaryCard(
+                        title: _t(
+                          l10n,
+                          'Transactions',
+                          'Transactions',
+                        ),
+                        value: _visibleSales
+                            .length
+                            .toString(),
+                        icon: Icons.receipt_long,
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  Text(
+                    _t(
+                      l10n,
+                      'My Sales',
+                      'Mauzo Yangu',
+                    ),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  if (_visibleSales.isEmpty)
+                    Card(
+                      elevation: 0,
+                      child: Padding(
+                        padding:
+                            const EdgeInsets.all(24),
+                        child: Center(
+                          child: Column(
+                            children: [
+                              Icon(
+                                Icons
+                                    .receipt_long_outlined,
+                                size: 46,
+                                color: Theme.of(
+                                        context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
+                              const SizedBox(
+                                height: 10,
+                              ),
+                              Text(
+                                _t(
+                                  l10n,
+                                  'No sales found for this period.',
+                                  'Hakuna mauzo kwa kipindi hiki.',
+                                ),
+                                textAlign:
+                                    TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    ..._visibleSales.map(
+                      _saleCard,
+                    ),
+                ],
+              ),
+            ),
+    );
+  }
+}

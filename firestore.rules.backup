@@ -1,0 +1,479 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================
+    // AUTH / ROLE HELPERS
+    // ============================================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userExists() {
+      return signedIn()
+        && exists(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        );
+    }
+
+    function userData() {
+      return get(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      ).data;
+    }
+
+    function isMshopOwner() {
+      return userExists()
+        && userData().role == 'mshop_owner';
+    }
+
+    function isOwner() {
+      return userExists()
+        && userData().role == 'pharmacy_owner';
+    }
+
+    function isStaff() {
+      return userExists()
+        && userData().role == 'staff';
+    }
+
+    function isOwnerOrStaff() {
+      return isOwner() || isStaff();
+    }
+
+    function myPharmacyId() {
+      return userData().pharmacyId;
+    }
+
+    function isMyPharmacy(pharmacyId) {
+      return isOwnerOrStaff()
+        && myPharmacyId() == pharmacyId;
+    }
+
+    function existingDocumentBelongsToMe() {
+      return isOwnerOrStaff()
+        && resource.data.pharmacyId == myPharmacyId();
+    }
+
+    function newDocumentBelongsToMe() {
+      return isOwnerOrStaff()
+        && request.resource.data.pharmacyId == myPharmacyId();
+    }
+
+    // ============================================================
+    // USERS
+    // ============================================================
+
+    match /users/{userId} {
+
+      allow read: if signedIn()
+        && (
+          request.auth.uid == userId
+          || isMshopOwner()
+        );
+
+      // Pharmacy Owner creates own user profile.
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.id == userId
+        && request.resource.data.role == 'pharmacy_owner'
+        && request.resource.data.pharmacyId == userId;
+
+      // Staff first login creates users/{uid}.
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.id == userId
+        && request.resource.data.role == 'staff'
+        && request.resource.data.email ==
+            request.auth.token.email
+        && request.resource.data.staffId != null
+        && exists(
+          /databases/$(database)/documents/staff/$(request.resource.data.staffId)
+        )
+        && get(
+          /databases/$(database)/documents/staff/$(request.resource.data.staffId)
+        ).data.email == request.auth.token.email
+        && get(
+          /databases/$(database)/documents/staff/$(request.resource.data.staffId)
+        ).data.status == 'active'
+        && request.resource.data.pharmacyId ==
+          get(
+            /databases/$(database)/documents/staff/$(request.resource.data.staffId)
+          ).data.pharmacyId;
+
+      // User can update own non-protected profile fields.
+      allow update: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.pharmacyId == resource.data.pharmacyId
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.createdAt == resource.data.createdAt;
+
+      // M-Shop Owner can activate/deactivate user accounts.
+      allow update: if isMshopOwner()
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'status',
+            'updatedAt'
+          ]);
+
+      allow delete: if false;
+    }
+
+    // ============================================================
+    // PHARMACIES
+    // ============================================================
+
+    match /pharmacies/{pharmacyId} {
+
+      // Pharmacy Owner/Staff see their pharmacy.
+      // M-Shop Owner sees all pharmacies.
+      allow read: if isMyPharmacy(pharmacyId)
+        || isMshopOwner();
+
+      // Pharmacy Owner creates own pharmacy.
+      allow create: if signedIn()
+        && request.auth.uid == pharmacyId
+        && request.resource.data.ownerId == request.auth.uid;
+
+      // Pharmacy Owner can update:
+      // - pharmacy information
+      // - subscription
+      // - trial information
+      // - scheduled renewal
+      //
+      // ownerId and createdAt remain protected.
+      allow update: if isOwner()
+        && isMyPharmacy(pharmacyId)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'name',
+            'email',
+            'phone',
+            'status',
+
+            'subscriptionPlan',
+            'subscriptionStatus',
+            'subscriptionStartAt',
+            'subscriptionEndAt',
+            'subscriptionUpdatedAt',
+
+            'trialDays',
+            'trialStartAt',
+            'trialEndAt',
+
+            'nextSubscriptionStatus',
+            'nextSubscriptionPlan',
+            'nextSubscriptionStartAt',
+            'nextSubscriptionEndAt',
+            'nextSubscriptionPrice',
+            'nextSubscriptionMonths',
+            'nextSubscriptionCreatedAt',
+
+            'updatedAt'
+          ]);
+
+      // M-Shop Owner can manage pharmacy/subscription status.
+      allow update: if isMshopOwner()
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'status',
+            'updatedAt',
+
+            'subscriptionPlan',
+            'subscriptionStatus',
+            'subscriptionStartAt',
+            'subscriptionEndAt',
+            'subscriptionUpdatedAt',
+
+            'nextSubscriptionStatus',
+            'nextSubscriptionPlan',
+            'nextSubscriptionStartAt',
+            'nextSubscriptionEndAt',
+            'nextSubscriptionPrice',
+            'nextSubscriptionMonths',
+            'nextSubscriptionCreatedAt'
+          ]);
+
+      allow delete: if false;
+
+      // Pharmacy stock records subcollection.
+      match /stock_records/{recordId} {
+        allow read, create, update, delete:
+          if isMyPharmacy(pharmacyId);
+      }
+    }
+
+    // ============================================================
+    // MEDICINES
+    // ============================================================
+
+    match /medicines/{medicineId} {
+
+      allow read, update, delete:
+        if existingDocumentBelongsToMe();
+
+      allow create:
+        if newDocumentBelongsToMe();
+    }
+
+    // ============================================================
+    // PURCHASES
+    // ============================================================
+
+    match /purchases/{purchaseId} {
+
+      allow read, update, delete:
+        if existingDocumentBelongsToMe();
+
+      allow create:
+        if newDocumentBelongsToMe();
+    }
+
+    // ============================================================
+    // SALES
+    // ============================================================
+
+    match /sales/{saleId} {
+
+      allow read, update, delete:
+        if existingDocumentBelongsToMe();
+
+      allow create:
+        if newDocumentBelongsToMe();
+    }
+
+    // ============================================================
+    // CUSTOMERS
+    // ============================================================
+
+    match /customers/{customerId} {
+
+      allow read, update, delete:
+        if existingDocumentBelongsToMe();
+
+      allow create:
+        if newDocumentBelongsToMe();
+    }
+
+    // ============================================================
+    // SUPPLIERS
+    // ============================================================
+
+    match /suppliers/{supplierId} {
+
+      allow read, update, delete:
+        if existingDocumentBelongsToMe();
+
+      allow create:
+        if newDocumentBelongsToMe();
+    }
+
+    // ============================================================
+    // EXPENSES
+    // ============================================================
+
+    match /expenses/{expenseId} {
+
+      allow read, update, delete:
+        if existingDocumentBelongsToMe();
+
+      allow create:
+        if newDocumentBelongsToMe();
+    }
+
+    // ============================================================
+    // STAFF
+    // ============================================================
+
+    match /staff/{staffId} {
+
+      // Pharmacy Owner/Staff can read staff in same pharmacy.
+      // M-Shop Owner can view all staff.
+      // Staff can read their own record by email.
+      allow read: if signedIn()
+        && (
+          isMshopOwner()
+          || (
+            isOwnerOrStaff()
+            && resource.data.pharmacyId == myPharmacyId()
+          )
+          || resource.data.email == request.auth.token.email
+        );
+
+      // Pharmacy Owner manages staff.
+      allow create:
+        if isOwner()
+        && newDocumentBelongsToMe();
+
+      allow update, delete:
+        if isOwner()
+        && existingDocumentBelongsToMe();
+    }
+
+    // ============================================================
+    // TOP-LEVEL STOCK RECORDS
+    // ============================================================
+
+    match /stock_records/{recordId} {
+
+      allow read, update, delete:
+        if existingDocumentBelongsToMe();
+
+      allow create:
+        if newDocumentBelongsToMe();
+    }
+
+    // ============================================================
+    // PHARMACY NOTIFICATIONS
+    // ============================================================
+
+    match /notifications/{notificationId} {
+
+      // Staff creates:
+      // - own Staff notification
+      // - Pharmacy Owner notification
+      allow create: if signedIn()
+        && userExists()
+        && request.resource.data.pharmacyId == myPharmacyId()
+        && request.resource.data.performedByUid == request.auth.uid
+        && request.resource.data.performedByName != null
+        && request.resource.data.createdAt != null
+        && request.resource.data.isRead == false
+        && (
+          (
+            isStaff()
+            && request.resource.data.recipientRole == 'staff'
+            && request.resource.data.recipientUid == request.auth.uid
+          )
+          ||
+          (
+            isStaff()
+            && request.resource.data.recipientRole == 'pharmacy_owner'
+            && request.resource.data.recipientUid != null
+          )
+        );
+
+      // Recipient can read their notifications.
+      allow read: if signedIn()
+        && userExists()
+        && resource.data.pharmacyId == myPharmacyId()
+        && resource.data.recipientUid == request.auth.uid;
+
+      // Recipient can mark one notification as read.
+      allow update: if signedIn()
+        && userExists()
+        && resource.data.pharmacyId == myPharmacyId()
+        && resource.data.recipientUid == request.auth.uid
+        && request.resource.data.pharmacyId == resource.data.pharmacyId
+        && request.resource.data.recipientUid == resource.data.recipientUid
+        && request.resource.data.performedByUid ==
+            resource.data.performedByUid
+        && request.resource.data.performedByName ==
+            resource.data.performedByName
+        && request.resource.data.createdAt ==
+            resource.data.createdAt
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'isRead',
+            'readAt'
+          ]);
+
+      allow delete: if signedIn()
+        && userExists()
+        && resource.data.pharmacyId == myPharmacyId()
+        && resource.data.recipientUid == request.auth.uid;
+    }
+
+    // ============================================================
+    // M-SHOP OWNER NOTIFICATIONS
+    // ============================================================
+
+    match /mshop_notifications/{notificationId} {
+
+      allow create: if isMshopOwner()
+        && request.resource.data.createdByUid ==
+            request.auth.uid
+        && request.resource.data.createdAt != null
+        && request.resource.data.isRead == false;
+
+      allow read: if isMshopOwner();
+
+      allow update: if isMshopOwner()
+        && request.resource.data.createdAt ==
+            resource.data.createdAt
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'isRead',
+            'readAt'
+          ]);
+
+      allow delete: if isMshopOwner();
+    }
+
+    // ============================================================
+    // SUBSCRIPTION PAYMENT REQUESTS
+    // ============================================================
+
+    match /subscription_payment_requests/{requestId} {
+
+      // Pharmacy Owner can submit a payment request
+      // for their own pharmacy.
+      allow create: if signedIn()
+        && isOwner()
+        && request.resource.data.pharmacyId == myPharmacyId()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.plan != null
+        && request.resource.data.price != null
+        && request.resource.data.months != null
+        && request.resource.data.paymentMethod != null
+        && request.resource.data.transactionReference != null
+        && request.resource.data.createdAt != null
+        && request.resource.data.updatedAt != null;
+
+      // Pharmacy Owner can read only their own payment requests.
+      // M-Shop Owner can read all payment requests.
+      allow read: if signedIn()
+        && (
+          isMshopOwner()
+          || (
+            isOwner()
+            && resource.data.pharmacyId == myPharmacyId()
+          )
+        );
+
+      // Only M-Shop Owner can verify or reject
+      // a payment request.
+      allow update: if isMshopOwner()
+        && request.resource.data.pharmacyId ==
+            resource.data.pharmacyId
+        && request.resource.data.ownerId ==
+            resource.data.ownerId
+        && request.resource.data.diff(resource.data)
+          .affectedKeys()
+          .hasOnly([
+            'status',
+            'verifiedAt',
+            'verifiedByUid',
+            'verifiedByName',
+            'rejectionReason',
+            'updatedAt'
+          ]);
+
+      // Payment requests cannot be deleted.
+      allow delete: if false;
+    }
+  }
+}

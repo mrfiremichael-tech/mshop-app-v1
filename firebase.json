@@ -1,0 +1,36 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "mshop-pharmacy",
+          "appId": "1:872256853267:android:7b4ad38dc3d7d17794b6e6",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "mshop-pharmacy",
+          "configurations": {
+            "android": "1:872256853267:android:7b4ad38dc3d7d17794b6e6",
+            "ios": "1:872256853267:ios:edb59b807714436694b6e6",
+            "macos": "1:872256853267:ios:edb59b807714436694b6e6",
+            "web": "1:872256853267:web:008054789f65a62a94b6e6",
+            "windows": "1:872256853267:web:16888ecab1a7cc1994b6e6"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": {
+    "public": "app_updates",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  }
+}

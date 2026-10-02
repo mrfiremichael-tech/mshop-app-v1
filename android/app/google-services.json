@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "872256853267",
+    "project_id": "mshop-pharmacy",
+    "storage_bucket": "mshop-pharmacy.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:872256853267:android:6e2c29c340cd6cd594b6e6",
+        "android_client_info": {
+          "package_name": "com.example.m_shop"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBQqCmm-I54dHbt-gK3RKI6A_unEPIaWeM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:872256853267:android:7b4ad38dc3d7d17794b6e6",
+        "android_client_info": {
+          "package_name": "com.example.mshop"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBQqCmm-I54dHbt-gK3RKI6A_unEPIaWeM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
