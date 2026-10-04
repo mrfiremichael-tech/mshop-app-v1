@@ -30,10 +30,29 @@ class AuthService {
       throw Exception('Password is required.');
     }
 
-    return _auth.signInWithEmailAndPassword(
+    final credential = await _auth.signInWithEmailAndPassword(
       email: normalizedEmail,
       password: password,
     );
+
+    final user = credential.user;
+
+    if (user != null) {
+      try {
+        final profile = await _firestore
+            .collection('users')
+            .doc(user.uid)
+            .get();
+
+        if (profile.data()?['role']?.toString() == 'mshop_owner') {
+          await ensureExistingAccountIds();
+        }
+      } catch (_) {
+        // Account ID migration must never block a successful login.
+      }
+    }
+
+    return credential;
   }
 
   Future<UserCredential> signInWithEmailAndPassword({
@@ -96,6 +115,8 @@ class AuthService {
     await user.updateDisplayName(normalizedFullName);
 
     final uid = user.uid;
+    final accountNumber = await _getNextAccountNumber();
+    final accountId = _formatAccountId(accountNumber);
 
     final userReference = _firestore.collection('users').doc(uid);
     final pharmacyReference = _firestore.collection('pharmacies').doc(uid);
@@ -104,6 +125,8 @@ class AuthService {
 
     batch.set(userReference, {
       'id': uid,
+      'accountId': accountId,
+      'accountNumber': accountNumber,
       'fullName': normalizedFullName,
       'email': normalizedEmail,
       'phone': normalizedPhone,
@@ -116,6 +139,8 @@ class AuthService {
 
     batch.set(pharmacyReference, {
       'id': uid,
+      'accountId': accountId,
+      'accountNumber': accountNumber,
       'ownerId': uid,
       'name': normalizedPharmacyName,
       'email': normalizedEmail,
@@ -169,6 +194,169 @@ class AuthService {
     );
   }
 
+  // ============================================================
+  // ACCOUNT ID
+  // ============================================================
+
+  Future<int> _getNextAccountNumber() async {
+    final counterRef = _firestore
+        .collection('app_config')
+        .doc('account_sequence');
+
+    return _firestore.runTransaction<int>(
+      (transaction) async {
+        final snapshot = await transaction.get(counterRef);
+        final data = snapshot.data() ?? {};
+        final current = data['nextNumber'] is num
+            ? (data['nextNumber'] as num).toInt()
+            : 0;
+        final next = current + 1;
+
+        transaction.set(
+          counterRef,
+          {
+            'nextNumber': next,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+
+        return next;
+      },
+    );
+  }
+
+  String _formatAccountId(int number) {
+    return 'MS${number.toString().padLeft(4, '0')}';
+  }
+
+  // ============================================================
+  // MIGRATE EXISTING ACCOUNT IDs
+  // ============================================================
+
+  Future<void> ensureExistingAccountIds() async {
+    final user = currentUser;
+
+    if (user == null) {
+      return;
+    }
+
+    final ownerSnapshot = await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    if (ownerSnapshot.data()?['role']?.toString() != 'mshop_owner') {
+      return;
+    }
+
+    final usersSnapshot = await _firestore
+        .collection('users')
+        .get();
+
+    final documents = usersSnapshot.docs.toList();
+
+    documents.sort((a, b) {
+      final aValue = a.data()['createdAt'];
+      final bValue = b.data()['createdAt'];
+
+      final aMillis = aValue is Timestamp
+          ? aValue.millisecondsSinceEpoch
+          : 0;
+
+      final bMillis = bValue is Timestamp
+          ? bValue.millisecondsSinceEpoch
+          : 0;
+
+      return aMillis.compareTo(bMillis);
+    });
+
+    final missingDocuments = documents.where((document) {
+      final data = document.data();
+
+      final accountId =
+          data['accountId']?.toString().trim() ?? '';
+
+      return accountId.isEmpty ||
+          data['accountNumber'] is! num;
+    }).toList();
+
+    if (missingDocuments.isEmpty) {
+      return;
+    }
+
+    final counterRef = _firestore
+        .collection('app_config')
+        .doc('account_sequence');
+
+    // Reserve the whole number range first so a new registration
+    // cannot receive a number that migration is about to use.
+    final reserved = await _firestore.runTransaction<List<int>>(
+      (transaction) async {
+        final snapshot = await transaction.get(counterRef);
+        final data = snapshot.data() ?? {};
+
+        final current = data['nextNumber'] is num
+            ? (data['nextNumber'] as num).toInt()
+            : 0;
+
+        final start = current + 1;
+        final end = current + missingDocuments.length;
+
+        transaction.set(
+          counterRef,
+          {
+            'nextNumber': end,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+
+        return [start, end];
+      },
+    );
+
+    final batch = _firestore.batch();
+
+    for (var index = 0;
+        index < missingDocuments.length;
+        index++) {
+      final document = missingDocuments[index];
+      final data = document.data();
+
+      final accountNumber = reserved[0] + index;
+      final accountId = _formatAccountId(accountNumber);
+
+      batch.update(
+        document.reference,
+        {
+          'accountId': accountId,
+          'accountNumber': accountNumber,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+      );
+
+      if (data['role']?.toString() == 'pharmacy_owner') {
+        final pharmacyId =
+            data['pharmacyId']?.toString().trim() ?? '';
+
+        if (pharmacyId.isNotEmpty) {
+          batch.update(
+            _firestore
+                .collection('pharmacies')
+                .doc(pharmacyId),
+            {
+              'accountId': accountId,
+              'accountNumber': accountNumber,
+              'updatedAt': FieldValue.serverTimestamp(),
+            },
+          );
+        }
+      }
+    }
+
+    await batch.commit();
+  }
   // ============================================================
   // CREATE STAFF FIREBASE AUTH ACCOUNT
   // ============================================================
@@ -303,8 +491,12 @@ class AuthService {
     final existing = await userReference.get();
 
     if (!existing.exists) {
+      final accountNumber = await _getNextAccountNumber();
+      final accountId = _formatAccountId(accountNumber);
       await userReference.set({
         'id': user.uid,
+        'accountId': accountId,
+        'accountNumber': accountNumber,
         'fullName': fullName,
         'email': email,
         'phone': phone,
@@ -339,7 +531,11 @@ class AuthService {
       }
     }
 
+    final finalUserSnapshot = await userReference.get();
+    final finalUserData = finalUserSnapshot.data() ?? {};
+
     return {
+      ...finalUserData,
       'id': user.uid,
       'fullName': fullName,
       'email': email,

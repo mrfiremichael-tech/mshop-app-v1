@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../../core/localization/app_localizations.dart';
 import '../../../models/sale_model.dart';
@@ -36,6 +37,8 @@ class _SalesListScreenState
       TextEditingController();
 
   String? _pharmacyId;
+  bool _isStaff = false;
+  String? _staffId;
   String _searchQuery = '';
 
   @override
@@ -58,6 +61,9 @@ class _SalesListScreenState
     try {
       final pharmacyId =
           await _authService.getCurrentPharmacyId();
+      final profile = await _authService.getCurrentUserProfile();
+      final currentUser = FirebaseAuth.instance.currentUser;
+      final isStaff = profile?['role']?.toString() == 'staff';
 
       if (!mounted) {
         return;
@@ -65,6 +71,8 @@ class _SalesListScreenState
 
       setState(() {
         _pharmacyId = pharmacyId;
+        _isStaff = isStaff;
+        _staffId = isStaff ? currentUser?.uid : null;
       });
     } catch (e) {
       if (!mounted) {
@@ -221,10 +229,9 @@ class _SalesListScreenState
                   CircularProgressIndicator(),
             )
           : StreamBuilder<List<SaleModel>>(
-              stream:
-                  _saleRepository.watchSales(
-                _pharmacyId!,
-              ),
+              stream: _isStaff && _staffId != null
+                  ? _saleRepository.watchStaffSales(_staffId!)
+                  : _saleRepository.watchSales(_pharmacyId!),
               builder: (
                 context,
                 snapshot,

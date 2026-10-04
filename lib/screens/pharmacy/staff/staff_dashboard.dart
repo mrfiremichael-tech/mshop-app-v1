@@ -742,17 +742,18 @@ class _StaffDashboardState extends State<StaffDashboard> {
       );
     }
 
-    if (_can('create_sales') || _can('view_sales')) {
-      visibleModules.add(
-        _viewCard(
-          title: _isSwahili ? 'Ripoti Zangu' : 'My Reports',
-          icon: Icons.analytics_outlined,
-          onTap: () {
-            _open(const StaffReportsScreen());
-          },
-        ),
-      );
-    }
+    // Staff reports are part of the Staff dashboard and should be visible
+    // regardless of create/view sales permissions. The report screen itself
+    // shows only sales associated with the logged-in staff account.
+    visibleModules.add(
+      _viewCard(
+        title: _isSwahili ? 'Ripoti Zangu' : 'My Reports',
+        icon: Icons.analytics_outlined,
+        onTap: () {
+          _open(const StaffReportsScreen());
+        },
+      ),
+    );
 
     if (_can('view_sales')) {
       visibleModules.add(

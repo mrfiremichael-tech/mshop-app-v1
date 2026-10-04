@@ -37,7 +37,19 @@ class _MshopOwnerDashboardState
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
-        titleSpacing: 16,
+        titleSpacing: 8,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 12),
+          child: Image.asset(
+            'assets/images/mshop_logo.png',
+            width: 34,
+            height: 34,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              return const Icon(Icons.local_pharmacy_rounded);
+            },
+          ),
+        ),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -205,10 +217,19 @@ class _MshopOwnerDashboardState
                 borderRadius:
                     BorderRadius.circular(16),
               ),
-              child: Icon(
-                Icons.admin_panel_settings_rounded,
-                color: colorScheme.onPrimary,
-                size: 28,
+              child: Padding(
+                padding: const EdgeInsets.all(7),
+                child: Image.asset(
+                  'assets/images/mshop_logo.png',
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Icon(
+                      Icons.admin_panel_settings_rounded,
+                      color: colorScheme.onPrimary,
+                      size: 28,
+                    );
+                  },
+                ),
               ),
             ),
             const SizedBox(width: 16),

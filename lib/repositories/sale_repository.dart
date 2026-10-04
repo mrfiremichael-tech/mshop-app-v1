@@ -1,4 +1,4 @@
-﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/sale_model.dart';
@@ -62,6 +62,27 @@ class SaleRepository {
     });
   }
 
+  Stream<List<SaleModel>> watchStaffSales(
+    String staffId,
+  ) {
+    return _sales()
+        .where(
+          'staffId',
+          isEqualTo: staffId,
+        )
+        .snapshots()
+        .map((snapshot) {
+      final sales = snapshot.docs
+          .map(
+            SaleModel.fromFirestore,
+          )
+          .toList();
+
+      _sortByNewest(sales);
+
+      return sales;
+    });
+  }
   Future<List<SaleModel>> getSales(
     String pharmacyId,
   ) async {

@@ -1,9 +1,8 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:in_app_update_me/in_app_update_me.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/app_controller.dart';
@@ -602,50 +601,10 @@ class _SplashScreenState
 
   Future<void> _startSplash() async {
     await Future.delayed(
-      const Duration(seconds: 3),
+      const Duration(
+        seconds: 3,
+      ),
     );
-
-    if (!mounted) {
-      return;
-    }
-
-    try {
-      final updater = InAppUpdateMe();
-
-      final updateInfo = await updater.checkForUpdate(
-        useStore: false,
-        updateUrl:
-            'https://mshop-pharmacy.web.app/app_updates/app_update.json',
-        currentVersion: '1.0.3',
-      );
-
-      if (!mounted) {
-        return;
-      }
-
-      if (updateInfo?.updateAvailable == true &&
-          updateInfo?.shouldForceUpdate == true) {
-        ForceUpdateDialog.show(
-          context,
-          updateInfo!,
-          const UpdateConfig(
-            useStore: false,
-            forceUpdate: true,
-          ),
-          onError: (error) {
-            debugPrint(
-              'FORCE UPDATE ERROR: $error',
-            );
-          },
-        );
-
-        return;
-      }
-    } catch (error) {
-      debugPrint(
-        'FORCE UPDATE CHECK ERROR: $error',
-      );
-    }
 
     if (!mounted) {
       return;

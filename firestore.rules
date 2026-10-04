@@ -1,4 +1,4 @@
-﻿rules_version = '2';
+rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -328,12 +328,15 @@ service cloud.firestore {
             'photoUrl'
           ]);
 
-      // M-Shop Owner can activate/deactivate users.
+      // M-Shop Owner can activate/deactivate users
+      // and assign permanent Account IDs during migration.
       allow update: if isMshopOwner()
         && request.resource.data.diff(resource.data)
           .affectedKeys()
           .hasOnly([
             'status',
+            'accountId',
+            'accountNumber',
             'updatedAt'
           ]);
 
@@ -587,6 +590,8 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data)
           .affectedKeys()
           .hasOnly([
+            'accountId',
+            'accountNumber',
             'status',
             'subscriptionPlan',
             'subscriptionStatus',
@@ -625,6 +630,38 @@ service cloud.firestore {
       }
     }
 
+    // ============================================================
+    // ACCOUNT ID SEQUENCE
+    // ============================================================
+
+    match /app_config/{configId} {
+      // Account numbering is read by authenticated users when a new
+      // account is created. M-Shop Owner also needs this during migration.
+      allow read: if signedIn()
+        && configId == 'account_sequence';
+
+      // The first account creates the sequence at 1.
+      allow create: if signedIn()
+        && configId == 'account_sequence'
+        && request.resource.data.nextNumber == 1;
+
+      // Normal registration increments by exactly one.
+      // M-Shop Owner migration may reserve a larger range in one transaction.
+      allow update: if signedIn()
+        && configId == 'account_sequence'
+        && (
+          request.resource.data.nextNumber ==
+            resource.data.nextNumber + 1
+          ||
+          (
+            isMshopOwner()
+            && request.resource.data.nextNumber >
+              resource.data.nextNumber
+          )
+        );
+
+      allow delete: if false;
+    }
     // ============================================================
     // MEDICINES
     // ============================================================

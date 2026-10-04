@@ -264,7 +264,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     final email = user.email ?? '-';
-    final accountId = user.uid;
+    final accountId = profile?['accountId']?.toString() ?? '-';
 
     bool saving = false;
 
